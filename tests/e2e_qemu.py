@@ -20,16 +20,17 @@ def main():
     print("probe:", info.available, info.detail)
     assert info.available, "qemu engine not available"
 
-    work = ROOT / "_e2eq"
-    os.system(f"rm -rf {work}")
-    (work / "docs").mkdir(parents=True)
-    (work / "readme.txt").write_bytes(b"hello from qemu appliance\n")
-    (work / "docs" / "n.txt").write_bytes(b"one\ntwo\nthree\n")
+    import tempfile
+    work = Path(tempfile.mkdtemp(prefix="vdi-e2eq-"))
+    (work / "src" / "docs").mkdir(parents=True)
+    (work / "src" / "readme.txt").write_bytes(b"hello from qemu appliance\n")
+    (work / "src" / "docs" / "n.txt").write_bytes(b"one\ntwo\nthree\n")
+    src_dir = work / "src"
     img = work / "disk.vmdk"
 
     print("# build ext4 vmdk ...")
     t0 = time.time()
-    eng.build_from_folder(str(work), str(img), fmt="vmdk", fs="ext4",
+    eng.build_from_folder(str(src_dir), str(img), fmt="vmdk", fs="ext4",
                           size="96M", label="QAPP", part_table="gpt")
     print(f"  built in {time.time()-t0:.1f}s, {img.stat().st_size} bytes")
 

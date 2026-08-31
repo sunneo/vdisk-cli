@@ -174,9 +174,10 @@ class GuestfishSession:
              input_bytes=_b64(data).encode())
         return tmp
 
-    def stage_tar(self, guest_folder: str) -> str:
+    def stage_tar(self, guest_folder: str, exclude: str | None = None) -> str:
         tmp = f"/tmp/vdi-{_rand()}.tar"
-        _wsl(["sh", "-c", f"tar -C {shlex.quote(guest_folder)} -cf {tmp} ."],
+        ex = f"--exclude={shlex.quote(exclude)} " if exclude else ""
+        _wsl(["sh", "-c", f"tar -C {shlex.quote(guest_folder)} {ex}-cf {tmp} ."],
              distro=self.distro)
         return tmp
 
@@ -272,7 +273,9 @@ class WslEngine(Engine):
                 if label:
                     _set_label_via_tool(s, dev, fstype, label)
             s.gf("mount", dev, "/")
-            tar = s.stage_tar(gfolder)
+            rel = os.path.relpath(out, os.path.abspath(folder))
+            tar = s.stage_tar(gfolder, exclude=("./" + rel.replace(os.sep, "/"))
+                              if not rel.startswith("..") else None)
             try:
                 s.gf("tar-in", tar, "/", timeout=600)
             finally:

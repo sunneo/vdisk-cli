@@ -117,7 +117,14 @@ class QemuApplianceEngine(Engine):
 
         import tempfile
         tarpath = tempfile.mkstemp(prefix="vdi-payload-", suffix=".tar")[1]
-        subprocess.run(["tar", "-C", os.path.abspath(folder), "-cf", tarpath, "."], check=True)
+        tar_cmd = ["tar", "-C", os.path.abspath(folder), "-cf", tarpath]
+        try:                                    # don't pack the output into itself
+            rel = os.path.relpath(out, os.path.abspath(folder))
+            if not rel.startswith(".."):
+                tar_cmd += ["--exclude", "./" + rel.replace(os.sep, "/")]
+        except ValueError:
+            pass
+        subprocess.run(tar_cmd + ["."], check=True)
         try:
             img = QemuOpenImage(_find_qemu(), out, None, readonly=False,
                                 _raw_disk=True, aux_file=tarpath)
@@ -248,17 +255,26 @@ class _Console:
         return text, rc
 
     def read_bin(self, path: str, timeout: float = 600) -> bytes:
-        out, rc = self.sh(f"xxd -p {shlex.quote(path)}", check=False, timeout=timeout)
+        # busybox uuencode -m == base64; it has no xxd -r, so we use this both ways
+        out, rc = self.sh(f"uuencode -m {shlex.quote(path)} - 2>/dev/null", check=False,
+                          timeout=timeout)
         if rc != 0:
             raise NotFound(path)
-        return bytes.fromhex("".join(out.split()))
+        lines = out.splitlines()
+        try:
+            b = "".join(lines[lines.index(next(l for l in lines if l.startswith("begin-base64"))) + 1:
+                              lines.index("====")])
+        except (StopIteration, ValueError):
+            b = "".join(l for l in lines if not l.startswith(("begin-base64", "===")))
+        return base64.b64decode(b)
 
     def write_bin(self, path: str, data: bytes, timeout: float = 600) -> None:
-        h = data.hex()
-        self.sh(": > /tmp/.hx", timeout=timeout)
-        for i in range(0, len(h), 6000):        # keep shell lines sane
-            self.sh(f"printf %s {h[i:i+6000]} >> /tmp/.hx", timeout=timeout)
-        self.sh(f"xxd -r -p /tmp/.hx > {shlex.quote(path)} && rm -f /tmp/.hx", timeout=timeout)
+        b = base64.b64encode(data).decode()
+        self.sh(f"printf 'begin-base64 644 -\\n' > /tmp/.u64", timeout=timeout)
+        for i in range(0, len(b), 6000):
+            self.sh(f"printf '%s\\n' {b[i:i+6000]} >> /tmp/.u64", timeout=timeout)
+        self.sh("printf '====\\n' >> /tmp/.u64", timeout=timeout)
+        self.sh(f"uudecode -o {shlex.quote(path)} < /tmp/.u64 && rm -f /tmp/.u64", timeout=timeout)
 
 
 class QemuOpenImage(OpenImage):
