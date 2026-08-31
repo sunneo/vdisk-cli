@@ -1,0 +1,39 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        py: ["3.10", "3.12"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.py }}
+      - run: pip install pytest
+      - run: python -m pytest -q            # unit + local-engine + wire + frontends
+
+  appliance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install build deps
+        run: sudo apt-get update && sudo apt-get install -y busybox-static linux-image-generic e2fsprogs dosfstools exfatprogs util-linux cpio
+      - run: sudo chmod 0644 /boot/vmlinuz-* && bash appliance/build.sh
+      - name: e2e against the bundled appliance (KVM if the runner has it, else TCG)
+        run: |
+          sudo apt-get install -y qemu-system-x86 qemu-utils xorriso
+          sudo chmod 666 /dev/kvm || true
+          python tests/e2e_qemu.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appliance
+          path: appliance/build/

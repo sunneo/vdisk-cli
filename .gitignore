@@ -1,10 +1,25 @@
 __pycache__/
 *.pyc
-/_e2e/
-/sample/
+.pytest_cache/
+*.egg-info/
+
+# build artifacts
+/appliance/build/
 /build/
+/dist/
+*.spec.bak
+
+# test scratch
+/_e2e/
+/_e2eq/
+/sample/
+/incoming/
+/outgoing/
+
+# disk images
 *.vmdk
 *.vhdx
+*.vhd
 *.qcow2
 *.iso
-.pytest_cache/
+*.raw

@@ -27,7 +27,24 @@ from vdi.engine.base import Engine, EngineInfo, OpenImage
 from vdi.errors import EngineError, NotFound, ReadOnly, Unsupported
 from vdi.fsops import DfInfo, DirEntry, GrepHit, StatInfo, NO_POSIX_PERMS
 
-APPLIANCE = Path(__file__).resolve().parents[3] / "appliance" / "build"
+def _appliance_dir() -> Path:
+    # env override, then PyInstaller bundle, then the source tree, then a
+    # user data dir (where `vdi appliance build` / a downloaded release lands)
+    if os.environ.get("VDI_APPLIANCE"):
+        return Path(os.environ["VDI_APPLIANCE"])
+    if getattr(sys, "_MEIPASS", None):
+        return Path(sys._MEIPASS) / "appliance" / "build"
+    src = Path(__file__).resolve().parents[3] / "appliance" / "build"
+    if (src / "vmlinuz").exists():
+        return src
+    if os.name == "nt":
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "vdi" / "appliance"
+    else:
+        base = Path.home() / ".local" / "share" / "vdi" / "appliance"
+    return base if (base / "vmlinuz").exists() else src
+
+
+APPLIANCE = _appliance_dir()
 _NO_PERMS = NO_POSIX_PERMS
 
 

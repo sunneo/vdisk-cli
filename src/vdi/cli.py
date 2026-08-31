@@ -73,6 +73,35 @@ def cmd_doctor(args) -> int:
     return 0
 
 
+def cmd_appliance(args) -> int:
+    import subprocess
+    from vdi.engine.qemu import APPLIANCE
+    build_sh = APPLIANCE.parent / "build.sh"
+    if args.sub == "path":
+        print(APPLIANCE)
+        return 0
+    if args.sub == "status":
+        for f in ("vmlinuz", "initramfs.gz", "appliance.json"):
+            p = APPLIANCE / f
+            print(f"  {f:16} {'ok  ' + str(p.stat().st_size) if p.exists() else 'MISSING'}")
+        return 0
+    # build
+    if sys.platform == "win32":
+        distro = args.distro or ""
+        cmd = ["wsl.exe"] + (["-d", distro] if distro else []) + \
+              ["--", "bash", _wsl_pathify(str(build_sh))]
+    else:
+        cmd = ["bash", str(build_sh)]
+    print(f"[vdi] running {' '.join(cmd)}")
+    return subprocess.run(cmd).returncode
+
+
+def _wsl_pathify(p: str) -> str:
+    if len(p) > 1 and p[1] == ":":
+        return "/mnt/" + p[0].lower() + p[2:].replace("\\", "/")
+    return p
+
+
 # ----------------------------------------------------------------------
 # image
 # ----------------------------------------------------------------------
@@ -378,6 +407,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("doctor", help="check engines and environment").set_defaults(func=cmd_doctor)
+
+    ap = sub.add_parser("appliance", help="bundled-QEMU appliance (build/status/path)")
+    aps = ap.add_subparsers(dest="sub", required=True)
+    x = aps.add_parser("status"); x.set_defaults(func=cmd_appliance)
+    x = aps.add_parser("path"); x.set_defaults(func=cmd_appliance)
+    x = aps.add_parser("build"); x.add_argument("--distro", help="WSL distro (Windows)")
+    x.set_defaults(func=cmd_appliance)
 
     # image ---------------------------------------------------------
     img = sub.add_parser("image", help="image-level operations").add_subparsers(dest="sub", required=True)
