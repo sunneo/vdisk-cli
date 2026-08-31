@@ -393,15 +393,17 @@ VDI-Converter/
 
 | 階段 | 內容 | 狀態 |
 |------|------|------|
-| **M1** | `vdi doctor`、`image create` / `convert` / `parts`、`fs` one-shot 全套 CRUD + grep（六種 FS，WSL 引擎） | ✅ 實測 |
+| **M1** | `vdi doctor`、`image create` / `convert` / `parts`、`fs` one-shot 全套 CRUD + `grep`（六種 FS） | ✅ 實測 |
+| **M2** | 自帶 QEMU + ~18MB 微型 appliance 引擎（`--engine qemu`，KVM/WHPX/HVF，失敗退 TCG） | ✅ 實測（`tests/e2e_qemu.py`） |
 | **M3** | `vdi serve` + registry + JSON-RPC + `--session` + one-shot 自動重用 session | ✅ 實測 |
-| **M4** | `vdi mcp` + `vdi serve --mcp`：MCP server 前端（給 AI 讀寫，TCP shim；官方 SDK stdio 選配） | ✅ 實測 |
-| **M2** | 自帶 QEMU + 微型 appliance 引擎（Windows 完全免 WSL；WHPX，失敗退 TCG） | ⏳ `appliance/` 骨架 |
-| **M5** | host 前端：FUSE(Linux) / WinFsp(Windows) / FTP / WebDAV | ⏳ |
-| **M6** | 發佈：Windows zip / Homebrew / Scoop / deb / rpm | ⏳ |
+| **M4** | `vdi mcp` + `vdi serve --mcp`：MCP server 前端（給 AI 讀寫，stdio + TCP shim） | ✅ 實測 |
+| **M5** | host 前端：FTP + WebDAV（純 stdlib）+ FUSE（Linux/macOS，fusepy） | ✅ 實測（`tests/test_frontends.py` / `e2e_fuse.py`） |
+| **M6** | 發佈：PyInstaller 單檔 + GitHub Actions CI + release workflow | ✅ `packaging/`、`.github/workflows/` |
+| — | 協定協商 + TOON 壓縮編碼（`hello` frame，`json`/`toon`） | ✅ 實測（`tests/test_wire.py`） |
 
-實作以 Python 完成（`src/vdi/`），host 與 guest agent 之後可換成靜態編譯語言。目前引擎為 `wsl`（libguestfs）
-與 `local`（測試用）；`qemu` 自帶 appliance 引擎為 M2。
+實作以 Python 完成（`src/vdi/`，零 runtime 相依）。引擎：`wsl`（libguestfs，Windows 主力）、
+`qemu`（自帶 appliance，免 WSL）、`local`（測試）。WinFsp（Windows 掛磁碟機）未做——
+Windows 用 `--webdav` + `net use X:` 代替。
 
 ---
 
