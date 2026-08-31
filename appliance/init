@@ -1,0 +1,37 @@
+#!/bin/busybox sh
+# vdi appliance init: minimal bring-up, then hand the host an interactive shell
+# on the kernel console. The host `qemu` engine frames commands with sentinels
+# and never lets a command error kill the session.
+
+BB=/bin/busybox
+$BB mkdir -p /proc /sys /dev /mnt /tmp /run
+$BB mount -t proc     proc  /proc  2>/dev/null
+$BB mount -t sysfs    sysfs /sys   2>/dev/null
+$BB mount -t devtmpfs dev   /dev   2>/dev/null
+$BB mount -t tmpfs    tmp   /tmp   2>/dev/null
+
+for a in $($BB --list); do
+    [ -e "/bin/$a" ] || $BB ln -s /bin/busybox "/bin/$a" 2>/dev/null
+done
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin HOME=/root PS1=''
+
+depmod -a 2>/dev/null
+for m in virtio virtio_ring virtio_pci virtio_mmio virtio_blk virtio_console \
+         mbcache jbd2 crc16 crc32c_generic crc32c nls_cp437 nls_ascii \
+         nls_iso8859-1 nls_utf8 fat vfat msdos exfat ext2 ext3 ext4 \
+         isofs udf ntfs3 btrfs xfs; do
+    modprobe "$m" 2>/dev/null
+done
+$BB mdev -s 2>/dev/null
+# give virtio-blk a moment to enumerate, then re-scan
+i=0; while [ $i -lt 20 ] && [ ! -e /dev/vda ]; do $BB usleep 100000; $BB mdev -s 2>/dev/null; i=$((i+1)); done
+
+# Kill terminal echo + CR/LF translation on the console so the host sees exactly
+# what the shell emits and nothing of what it sends.
+stty -echo -onlcr -icrnl -inlcr raw 2>/dev/null || stty -echo 2>/dev/null || true
+
+echo "vdi-appliance ready"
+# PID 1 already has stdin/stdout/stderr on /dev/console. Plain (non-interactive)
+# shell: no banner, no command echo, no job-control chatter. The host frames
+# every command with a sentinel and reads the exit code back.
+exec sh
