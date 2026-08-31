@@ -421,7 +421,7 @@ def build_parser() -> argparse.ArgumentParser:
     # image ---------------------------------------------------------
     img = sub.add_parser("image", help="image-level operations").add_subparsers(dest="sub", required=True)
 
-    _IMGFMT = ["vmdk", "vhdx", "vhd", "qcow2", "raw"]
+    _IMGFMT = ["vmdk", "vhdx", "vhd", "vdi", "qcow2", "raw"]
     c = img.add_parser("create", help="build an image from a folder")
     c.add_argument("folder"); c.add_argument("output")
     c.add_argument("--fs", default="ext4", choices=list(("fat16 fat32 exfat ext2 ext3 ext4").split()))

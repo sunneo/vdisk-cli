@@ -17,10 +17,16 @@ _EXT_TO_FMT = {
     ".vmdk": "vmdk",
     ".vhdx": "vhdx",
     ".vhd": "vpc",
+    ".vdi": "vdi",       # VirtualBox native
     ".qcow2": "qcow2",
+    ".qcow": "qcow",
     ".img": "raw",
     ".raw": "raw",
 }
+
+# user-facing format name -> qemu-img -O value
+_FMT_ALIAS = {"vhd": "vpc", "vpc": "vpc", "vmdk": "vmdk", "vhdx": "vhdx",
+              "vdi": "vdi", "qcow2": "qcow2", "raw": "raw"}
 
 _PASSTHROUGH = {"create", "convert", "info", "check", "resize", "snapshot",
                 "commit", "rebase", "-p", "-c", "-f", "-O", "-o", "--output=json"}
@@ -121,10 +127,11 @@ class QemuImg:
     def convert(self, src: str, dst: str, *, src_fmt: str | None = None,
                 dst_fmt: str | None = None, compress: bool = False,
                 subformat: str | None = None, preallocation: str | None = None) -> None:
+        out_fmt = _FMT_ALIAS.get(dst_fmt, dst_fmt) if dst_fmt else fmt_from_path(dst)
         args = ["convert", "-p"]
         if src_fmt:
-            args += ["-f", src_fmt]
-        args += ["-O", dst_fmt or fmt_from_path(dst)]
+            args += ["-f", _FMT_ALIAS.get(src_fmt, src_fmt)]
+        args += ["-O", out_fmt]
         opts = []
         if subformat:
             opts.append(f"subformat={subformat}")

@@ -251,7 +251,7 @@ class VdiGui(tk.Tk):
     def open_image_dialog(self):
         path = filedialog.askopenfilename(
             title="Open disk image",
-            filetypes=[("Disk images", "*.vmdk *.vhdx *.vhd *.qcow2 *.img *.raw *.iso"),
+            filetypes=[("Disk images", "*.vmdk *.vhdx *.vhd *.vdi *.qcow2 *.img *.raw *.iso"),
                        ("All files", "*.*")])
         if not path:
             return
@@ -471,22 +471,7 @@ class VdiGui(tk.Tk):
         _CreateDialog(self, self.worker)
 
     def convert_dialog(self):
-        src = filedialog.askopenfilename(title="Source image")
-        if not src:
-            return
-        dst = filedialog.asksaveasfilename(title="Output image",
-                                           filetypes=[("vhdx", "*.vhdx"), ("vmdk", "*.vmdk"),
-                                                      ("qcow2", "*.qcow2"), ("raw", "*.raw")])
-        if not dst:
-            return
-
-        def work():
-            from vdi.image import QemuImg
-            from vdi.engine import get_engine
-            QemuImg(engine=get_engine("auto")).convert(src, dst)
-
-        self.worker.submit(f"converting → {os.path.basename(dst)}", work,
-                           lambda _r: messagebox.showinfo("vdi", "Conversion done."))
+        _ConvertDialog(self, self.worker)
 
     def serve_dialog(self):
         path = filedialog.askopenfilename(title="Image to serve")
@@ -561,7 +546,7 @@ class _AskOpts(tk.Toplevel):
         ttk.Label(self, text="Format").grid(row=2, column=0, sticky=tk.E, padx=6)
         self._fmt = tk.StringVar(value="auto")
         ttk.Combobox(self, textvariable=self._fmt, width=12, state="readonly",
-                     values=["auto", "vmdk", "vhdx", "vhd", "qcow2", "raw"]).grid(
+                     values=["auto", "vmdk", "vhdx", "vhd", "vdi", "qcow2", "raw"]).grid(
             row=2, column=1, sticky=tk.W, pady=3)
         ttk.Label(self, text="Partition").grid(row=3, column=0, sticky=tk.E, padx=6)
         self._part = tk.StringVar()
@@ -648,7 +633,7 @@ class _CreateDialog(tk.Toplevel):
         if not folder or not out:
             return
         ext = os.path.splitext(out)[1].lower()
-        if ext not in (".iso", ".vmdk", ".vhdx", ".vhd", ".qcow2", ".raw", ".img"):
+        if ext != ".iso" and ext not in _IMG_EXTS:
             out += ".vmdk"          # sensible default when the name has no extension
         self.destroy()
 
@@ -664,6 +649,61 @@ class _CreateDialog(tk.Toplevel):
 
         self.worker.submit(f"creating {os.path.basename(out)} …", work,
                            lambda _r: messagebox.showinfo("vdi", f"Created {out}"))
+
+
+_IMG_EXTS = (".vmdk", ".vhdx", ".vhd", ".vdi", ".qcow2", ".raw", ".img")
+_FMT_EXT = {"vmdk": ".vmdk", "vhdx": ".vhdx", "vhd": ".vhd", "vdi": ".vdi",
+            "qcow2": ".qcow2", "raw": ".raw"}
+
+
+class _ConvertDialog(tk.Toplevel):
+    def __init__(self, parent, worker):
+        super().__init__(parent)
+        self.title("Convert image")
+        self.worker = worker
+        self.src = tk.StringVar(); self.out = tk.StringVar()
+        self.fmt = tk.StringVar(value="vhdx")
+        g = lambda r, t: ttk.Label(self, text=t).grid(row=r, column=0, sticky=tk.E, padx=6, pady=3)
+        g(0, "Source image")
+        ttk.Entry(self, textvariable=self.src, width=40).grid(row=0, column=1)
+        ttk.Button(self, text="…", width=3, command=self._pick_src).grid(row=0, column=2)
+        g(1, "Output format")
+        ttk.Combobox(self, textvariable=self.fmt, width=10, state="readonly",
+                     values=["vmdk", "vhdx", "vhd", "vdi", "qcow2", "raw"]).grid(row=1, column=1, sticky=tk.W)
+        g(2, "Output file")
+        ttk.Entry(self, textvariable=self.out, width=40).grid(row=2, column=1)
+        ttk.Button(self, text="…", width=3, command=self._pick_out).grid(row=2, column=2)
+        ttk.Button(self, text="Convert", command=self._go).grid(row=3, column=1, pady=8)
+
+    def _pick_src(self):
+        p = filedialog.askopenfilename(title="Source image")
+        if p:
+            self.src.set(p)
+            if not self.out.get():
+                base = os.path.splitext(p)[0]
+                self.out.set(base + _FMT_EXT.get(self.fmt.get(), ".vhdx"))
+
+    def _pick_out(self):
+        p = filedialog.asksaveasfilename(
+            title="Output image", defaultextension=_FMT_EXT.get(self.fmt.get(), ".vhdx"))
+        if p:
+            self.out.set(p)
+
+    def _go(self):
+        src, out, fmt = self.src.get(), self.out.get(), self.fmt.get()
+        if not src or not out:
+            return
+        if os.path.splitext(out)[1].lower() not in _IMG_EXTS:
+            out += _FMT_EXT.get(fmt, ".img")
+        self.destroy()
+
+        def work():
+            from vdi.image import QemuImg
+            from vdi.engine import get_engine
+            QemuImg(engine=get_engine("auto")).convert(src, out, dst_fmt=fmt)
+
+        self.worker.submit(f"converting -> {os.path.basename(out)} ({fmt})", work,
+                           lambda _r: messagebox.showinfo("vdi", f"Converted to {out}"))
 
 
 class _ServeDialog(tk.Toplevel):
