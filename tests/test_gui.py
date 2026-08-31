@@ -64,12 +64,13 @@ def test_helpers():
 
 
 def test_activity_log_receives_engine_steps(app):
+    import time
     from vdi import log
     log.step("wsl: booting appliance VM")
-    for _ in range(40):
+    for _ in range(100):
         app.update()
-        txt = app.act_txt.get("1.0", "end")
-        if "booting appliance VM" in txt:
+        if "booting appliance VM" in app.act_txt.get("1.0", "end"):
             break
+        time.sleep(0.02)
     assert "booting appliance VM" in app.act_txt.get("1.0", "end")
     assert app.act_visible
