@@ -28,12 +28,13 @@ class RemoteOps:
         return self.c.call("fs.size", path=path, apparent=apparent)["bytes"]
 
     def read(self, path, offset=0, length=None) -> bytes:
-        r = self.c.call("fs.read", path=path, offset=offset, length=length)
-        return base64.b64decode(r["data"])
+        _, blob = self.c.call("fs.read", path=path, offset=offset, length=length,
+                              _want_raw=True)
+        return blob
 
     def write(self, path, data: bytes, offset=0, *, append=False) -> None:
-        self.c.call("fs.write", path=path, data=base64.b64encode(data).decode(),
-                    encoding="base64", offset=offset, append=append)
+        self.c.call("fs.write", path=path, offset=offset, append=append,
+                    _raw_out=bytes(data))
 
     def mkdir(self, path, *, parents=False):
         self.c.call("fs.mkdir", path=path, parents=parents)

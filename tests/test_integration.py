@@ -99,6 +99,12 @@ def test_rpc_roundtrip_and_registry(tree, monkeypatch, tmp_path):
         ops.write("/new/x", b"12345")
         assert ops.stat("/new/x").size == 5
         assert {e.name for e in ops.ls("/")} >= {"etc", "var", "new"}
+
+        # raw binary channel (no base64): 2 MiB with NUL/newline bytes
+        blob = bytes(range(256)) * 8192
+        ops.write("/new/blob.bin", blob)
+        assert ops.read("/new/blob.bin") == blob
+        assert ops.tree_size("/new") == len(blob) + 5
     finally:
         server.shutdown()
         registry.remove("t1")

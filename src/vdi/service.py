@@ -49,11 +49,15 @@ class FsService:
 
     def _m_fs_read(self, path, offset=0, length=None):
         data = self.ops.read(path, offset, length)
-        return {"encoding": "base64", "data": base64.b64encode(data).decode(),
-                "length": len(data)}
+        return {"length": len(data)}, data          # raw trailer
 
-    def _m_fs_write(self, path, data, encoding="base64", offset=0, append=False):
-        raw = base64.b64decode(data) if encoding == "base64" else data.encode()
+    def _m_fs_write(self, path, offset=0, append=False, _raw=None, data=None, encoding="base64"):
+        if _raw is not None:
+            raw = _raw
+        elif data is not None:                      # legacy base64 path
+            raw = base64.b64decode(data) if encoding == "base64" else data.encode()
+        else:
+            raw = b""
         self.ops.write(path, raw, offset, append=append)
         return {"written": len(raw)}
 
