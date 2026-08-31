@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+/_e2e/
+/sample/
+/build/
+*.vmdk
+*.vhdx
+*.qcow2
+*.iso
+.pytest_cache/
