@@ -510,7 +510,7 @@ class _CreateDialog(tk.Toplevel):
         g = lambda r, t: ttk.Label(self, text=t).grid(row=r, column=0, sticky=tk.E, padx=6, pady=3)
         self.folder = tk.StringVar(); self.out = tk.StringVar()
         self.fs = tk.StringVar(value="ext4"); self.size = tk.StringVar(value="1G")
-        self.label = tk.StringVar()
+        self.label = tk.StringVar(); self.ptable = tk.StringVar(value="auto")
         g(0, "Source folder")
         ttk.Entry(self, textvariable=self.folder, width=34).grid(row=0, column=1)
         ttk.Button(self, text="…", width=3,
@@ -523,7 +523,11 @@ class _CreateDialog(tk.Toplevel):
                      values=["fat16", "fat32", "exfat", "ext2", "ext3", "ext4"]).grid(row=2, column=1, sticky=tk.W)
         g(3, "Size"); ttk.Entry(self, textvariable=self.size, width=10).grid(row=3, column=1, sticky=tk.W)
         g(4, "Label"); ttk.Entry(self, textvariable=self.label, width=14).grid(row=4, column=1, sticky=tk.W)
-        ttk.Button(self, text="Create", command=self._go).grid(row=5, column=1, pady=8)
+        g(5, "Partition table")
+        ttk.Combobox(self, textvariable=self.ptable, width=10, state="readonly",
+                     values=["auto", "mbr", "gpt"]).grid(row=5, column=1, sticky=tk.W)
+        ttk.Label(self, text="(mbr = DOS / Windows 9x)").grid(row=6, column=1, sticky=tk.W)
+        ttk.Button(self, text="Create", command=self._go).grid(row=7, column=1, pady=8)
 
     def _pick_out(self):
         self.out.set(filedialog.asksaveasfilename(
@@ -532,6 +536,7 @@ class _CreateDialog(tk.Toplevel):
     def _go(self):
         folder, out = self.folder.get(), self.out.get()
         fs, size, label = self.fs.get(), self.size.get(), self.label.get()
+        ptable = self.ptable.get()
         if not folder or not out:
             return
         ext = os.path.splitext(out)[1].lower()
@@ -547,7 +552,7 @@ class _CreateDialog(tk.Toplevel):
                 eng.build_iso(folder, out, volid=label)
             else:
                 eng.build_from_folder(folder, out, fmt=fmt_from_path(out), fs=fs,
-                                      size=size, label=label)
+                                      size=size, label=label, part_table=ptable)
 
         self.worker.submit(f"creating {os.path.basename(out)} …", work,
                            lambda _r: messagebox.showinfo("vdi", f"Created {out}"))

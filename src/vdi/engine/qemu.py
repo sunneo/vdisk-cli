@@ -109,9 +109,12 @@ class QemuApplianceEngine(Engine):
     _FS = {"fat16": "vfat", "fat32": "vfat", "vfat": "vfat", "exfat": "exfat",
            "ext2": "ext2", "ext3": "ext3", "ext4": "ext4"}
 
-    def build_from_folder(self, folder, out, *, fmt, fs, size, label="", part_table="gpt"):
+    def build_from_folder(self, folder, out, *, fmt, fs, size, label="",
+                          part_table="auto", boot=False):
         if fs not in self._FS:
             raise EngineError(f"unsupported --fs {fs!r}")
+        from vdi.engine.wsl import _resolve_part_table, _MBR_ID
+        table = _resolve_part_table(part_table, fs)
         qi = shutil.which("qemu-img")
         if not qi:
             raise EngineError("qemu-img needed for image creation")
@@ -134,8 +137,16 @@ class QemuApplianceEngine(Engine):
             try:
                 # partition table + a single partition; if the tiny appliance
                 # kernel won't re-enumerate vda1, fall back to a whole-disk fs.
-                tbl = "gpt" if part_table != "mbr" else "dos"
-                img.sh(f"printf 'label: {tbl}\\n,,L\\n' | sfdisk --no-reread --no-tell-kernel /dev/vda",
+                gfs = self._FS[fs]
+                tbl = "dos" if table == "mbr" else "gpt"
+                mid = _MBR_ID.get(fs)
+                if tbl == "dos" and mid:
+                    ptype = mid[2:].upper()                      # sfdisk wants bare hex
+                    bootflag = ", bootable" if (boot or fs.startswith("fat")) else ""
+                    script = f"label: dos\\n,,{ptype}{bootflag}\\n"
+                else:
+                    script = "label: gpt\\n,,L\\n"
+                img.sh(f"printf '{script}' | sfdisk --no-reread --no-tell-kernel /dev/vda",
                        check=False)
                 img.sh("partx -a /dev/vda 2>/dev/null; blockdev --rereadpt /dev/vda 2>/dev/null; "
                        "mdev -s; i=0; while [ ! -e /dev/vda1 ] && [ $i -lt 20 ]; do usleep 100000; "
@@ -146,14 +157,18 @@ class QemuApplianceEngine(Engine):
                     img.sh("sfdisk --delete /dev/vda 2>/dev/null; dd if=/dev/zero of=/dev/vda bs=1M "
                            "count=1 2>/dev/null; sync", check=False)
 
-                gfs = self._FS[fs]
-                mk = {"vfat": ["mkfs.vfat"] + (["-n", label[:11]] if label else []),
-                      "exfat": ["mkfs.exfat"] + (["-L", label] if label else []),
-                      "ext2": ["mkfs.ext2", "-F", "-q"], "ext3": ["mkfs.ext3", "-F", "-q"],
-                      "ext4": ["mkfs.ext4", "-F", "-q"]}[gfs]
-                if label and gfs.startswith("ext"):
-                    mk += ["-L", label]
-                img.sh(" ".join(shlex.quote(x) for x in mk) + f" {dev}", check=False)
+                if gfs == "vfat":
+                    fbits = "16" if fs == "fat16" else "32"
+                    nm = f" -n {shlex.quote(label[:11])}" if label else ""
+                    hidden = " -h 2048" if dev.endswith("1") else ""
+                    img.sh(f"mkfs.vfat -F {fbits}{hidden}{nm} {dev}", check=False)
+                else:
+                    mk = {"exfat": ["mkfs.exfat"] + (["-L", label] if label else []),
+                          "ext2": ["mkfs.ext2", "-F", "-q"], "ext3": ["mkfs.ext3", "-F", "-q"],
+                          "ext4": ["mkfs.ext4", "-F", "-q"]}[gfs]
+                    if label and gfs.startswith("ext"):
+                        mk += ["-L", label]
+                    img.sh(" ".join(shlex.quote(x) for x in mk) + f" {dev}", check=False)
                 _, rc = img.sh(f"blkid {dev} | grep -q TYPE", check=False)
                 if rc != 0:
                     raise EngineError(f"mkfs {gfs} on {dev} produced no recognisable filesystem")

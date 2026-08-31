@@ -260,11 +260,13 @@ class WslEngine(Engine):
             return None      # let guestfish auto-detect
 
     # -- build (需求 1) -------------------------------------
-    def build_from_folder(self, folder: str, out: str, *, fmt: str, fs: str,
-                          size: str, label: str = "", part_table: str = "gpt") -> None:
+    def build_from_folder(self, folder: str, out: str, *, fmt: str, fs: str, size: str,
+                          label: str = "", part_table: str = "auto",
+                          boot: bool = False) -> None:
         if fs not in self._FS:
             raise EngineError(f"unsupported --fs {fs!r}")
         fstype = self._FS[fs]
+        table = _resolve_part_table(part_table, fs)     # auto -> mbr for DOS fs
         gfolder, gout = self.wsl_path(folder), self.wsl_path(out)
         _wsl(["qemu-img", "create", "-f", fmt, gout, size], distro=self.distro, timeout=120)
 
@@ -273,10 +275,27 @@ class WslEngine(Engine):
         try:
             s.gf("add-drive", gout, f"format:{fmt}")
             s.gf("run", timeout=400)
-            s.gf("part-init", "/dev/sda", "gpt" if part_table != "mbr" else "mbr")
+            s.gf("part-init", "/dev/sda", "mbr" if table == "mbr" else "gpt")
             s.gf("part-add", "/dev/sda", "primary", "2048", "-2048")
             dev = "/dev/sda1"
-            if label and fstype in self._MKFS_LABEL_OK:
+
+            mbr_id = _MBR_ID.get(fs)
+            if table == "mbr" and mbr_id:
+                # DOS / Windows 9x needs the right partition type byte + boot flag,
+                # otherwise it reports the partition as "non-DOS" even for FAT32.
+                s.gf("part-set-mbr-id", "/dev/sda", "1", mbr_id, check=False)
+            if table == "mbr" and (boot or fs.startswith("fat")):
+                s.gf("part-set-bootable", "/dev/sda", "1", "true", check=False)
+
+            if fstype == "vfat":
+                # set BPB hidden-sectors = partition LBA start so Win9x's fs
+                # driver accepts the geometry; -F picks FAT16/32 by --fs.
+                fbits = "16" if fs == "fat16" else "32"
+                nm = f" -n {shlex.quote(label[:11])}" if label else ""
+                r = s.gf("debug", "sh", f"mkfs.vfat -F {fbits} -h 2048{nm} {dev}", check=False)
+                if r[1] != 0:
+                    s.gf("mkfs", "vfat", dev)
+            elif label and fstype in self._MKFS_LABEL_OK:
                 s.gf("mkfs", fstype, dev, f"label:{label}")
             else:
                 s.gf("mkfs", fstype, dev)
@@ -559,6 +578,20 @@ def _set_label_via_tool(s: "GuestfishSession", dev: str, fstype: str, label: str
     if rc != 0:
         # non-fatal: label is cosmetic
         pass
+
+
+# MBR partition type bytes so DOS / Windows recognise the volume
+_MBR_ID = {"fat16": "0x0e", "fat32": "0x0c", "exfat": "0x07"}
+_DOS_FS = {"fat16", "fat32", "exfat"}
+
+
+def _resolve_part_table(choice: str, fs: str) -> str:
+    if choice in ("mbr", "dos", "msdos"):
+        return "mbr"
+    if choice == "gpt":
+        return "gpt"
+    # auto: MBR for DOS/Windows filesystems, GPT for Linux ones
+    return "mbr" if fs in _DOS_FS else "gpt"
 
 
 def _inside(out: str, folder: str) -> str | None:

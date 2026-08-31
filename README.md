@@ -70,6 +70,9 @@ into `appliance\qemu\`.
 vdi image create ./payload out.vmdk --fs ext4  --size 4G --label DATA
 vdi image create ./payload out.vhdx --fs exfat --size 8G
 vdi image create ./payload out.iso
+#   --part-table auto (default): MBR + correct DOS type byte + active flag for
+#   fat/exfat (so DOS / Windows 9x / VirtualBox see it without re-fdisk'ing),
+#   GPT for ext*. Force with --part-table mbr|gpt ; --boot marks it active.
 
 # 2. convert
 vdi image convert out.vmdk out.vhdx

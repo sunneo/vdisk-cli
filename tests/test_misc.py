@@ -47,3 +47,17 @@ def test_fmt_from_path_unknown_raises():
     with pytest.raises(VdiError) as ei:
         fmt_from_path("some/weird/name-no-ext", probe=False)
     assert "--format" in str(ei.value)
+
+
+def test_part_table_resolution():
+    from vdi.engine.wsl import _resolve_part_table, _MBR_ID
+    # auto: MBR for DOS filesystems (so Windows 9x recognises them), GPT for ext
+    assert _resolve_part_table("auto", "fat32") == "mbr"
+    assert _resolve_part_table("auto", "exfat") == "mbr"
+    assert _resolve_part_table("auto", "ext4") == "gpt"
+    # explicit wins
+    assert _resolve_part_table("gpt", "fat32") == "gpt"
+    assert _resolve_part_table("dos", "ext4") == "mbr"
+    # the DOS partition type bytes
+    assert _MBR_ID["fat32"] == "0x0c" and _MBR_ID["fat16"] == "0x0e"
+    assert _MBR_ID["exfat"] == "0x07"

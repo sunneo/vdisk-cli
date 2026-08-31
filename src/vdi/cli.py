@@ -132,7 +132,7 @@ def cmd_image_create(args) -> int:
     print(f"[vdi] building {fmt} {out} ({args.size}) fs={args.fs} label={args.label or '-'} "
           f"part-table={args.part_table}")
     eng.build_from_folder(str(src), str(out), fmt=fmt, fs=args.fs, size=args.size,
-                          label=args.label, part_table=args.part_table)
+                          label=args.label, part_table=args.part_table, boot=args.boot)
     print("[vdi] done")
     return 0
 
@@ -428,7 +428,9 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--format", choices=_IMGFMT, help="override format when the name has no extension")
     c.add_argument("--size", default="1G")
     c.add_argument("--label", default="")
-    c.add_argument("--part-table", default="gpt", choices=["gpt", "mbr"])
+    c.add_argument("--part-table", default="auto", choices=["auto", "gpt", "mbr", "dos"],
+                   help="auto = MBR for fat/exfat, GPT for ext (needed for DOS/Windows 9x)")
+    c.add_argument("--boot", action="store_true", help="mark the partition active/bootable")
     c.add_argument("--engine", default="auto")
     c.add_argument("--force", action="store_true")
     c.set_defaults(func=cmd_image_create)
