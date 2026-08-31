@@ -23,6 +23,7 @@ import threading
 import time
 from pathlib import Path
 
+from vdi import log
 from vdi.engine.base import Engine, EngineInfo, OpenImage
 from vdi.errors import EngineError, NotFound, ReadOnly, Unsupported
 from vdi.fsops import DfInfo, DirEntry, GrepHit, StatInfo, NO_POSIX_PERMS
@@ -94,13 +95,15 @@ class QemuApplianceEngine(Engine):
     def wsl_path(self, p: str) -> str:      # host paths are already native here
         return os.path.abspath(p)
 
-    def open_image(self, image, partition=None, *, readonly=False) -> "QemuOpenImage":
+    def open_image(self, image, partition=None, *, readonly=False,
+                   image_format=None) -> "QemuOpenImage":
         qemu = _find_qemu()
         if not qemu:
             raise EngineError("qemu-system-x86_64 not found; run 'vdi doctor'")
         if not (APPLIANCE / "vmlinuz").exists():
             raise EngineError(f"appliance not built: run {APPLIANCE.parent / 'build.sh'}")
-        return QemuOpenImage(qemu, os.path.abspath(image), partition, readonly=readonly)
+        return QemuOpenImage(qemu, os.path.abspath(image), partition, readonly=readonly,
+                             image_format=image_format)
 
     # image building reuses the same appliance
     _FS = {"fat16": "vfat", "fat32": "vfat", "vfat": "vfat", "exfat": "exfat",
@@ -247,8 +250,7 @@ class _Console:
         digits = rc_bytes.strip()
         rc = int(digits) if digits.isdigit() else 1
         text = body.decode("utf-8", "replace").strip("\n")
-        if os.environ.get("VDI_DEBUG") == "1":
-            sys.stderr.write(f"[qemu] {cmd[:70]!r} rc={rc} out={text[:120]!r}\n")
+        log.trace(f"qemu {cmd[:80]!r} rc={rc} {text[:100]!r}")
         # drop the echoed command line (first line) if the shell echoed it
         if check and rc != 0:
             raise EngineError(f"appliance: {cmd.splitlines()[0][:80]} -> rc={rc}\n{text[-400:]}")
@@ -281,10 +283,11 @@ class QemuOpenImage(OpenImage):
     fs = "unknown"
 
     def __init__(self, qemu, image, partition, *, readonly=False, _raw_disk=False,
-                 aux_file=None):
+                 aux_file=None, image_format=None):
         self.image = image
         self.readonly = readonly
         self.aux_file = aux_file          # attached as /dev/vdb (raw)
+        self._fmt_hint = image_format
         self._proc = None
         self._con: _Console | None = None
         self._boot(qemu)
@@ -298,7 +301,13 @@ class QemuOpenImage(OpenImage):
         srv.listen(1)
         srv.settimeout(120)
         port = srv.getsockname()[1]
-        fmt = _fmt_of(self.image) or "raw"
+        fmt = self._fmt_hint or _fmt_of(self.image)
+        if not fmt:
+            try:
+                from vdi.image import QemuImg
+                fmt = QemuImg().info(self.image).get("format") or "raw"
+            except Exception:
+                fmt = "raw"
         boot_timeout = 120 if "-accel tcg" in " ".join(_accel_args()) else 40
         args = [qemu, "-M", "q35", "-m", "512M", "-no-reboot", "-nographic",
                 "-nodefaults", "-no-user-config",
@@ -314,19 +323,24 @@ class QemuOpenImage(OpenImage):
         if self.aux_file:
             args += ["-drive", f"file={self.aux_file},if=none,id=d1,format=raw",
                      "-device", "virtio-blk-pci,drive=d1"]
+        accel = _accel_args()[1] if _accel_args()[0] == "-accel" else "tcg"
+        log.trace("qemu " + " ".join(args))
         self._proc = subprocess.Popen(args, stdin=subprocess.DEVNULL,
                                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        try:
-            conn, _ = srv.accept()
-        except socket.timeout:
-            self.close()
-            err = (self._proc.stderr.read() or b"").decode("utf-8", "replace")[-600:]
-            raise EngineError(f"appliance did not connect back:\n{err}")
-        finally:
-            srv.close()
-        conn.settimeout(None)
-        self._con = _Console(conn)
-        self._con.handshake(boot_timeout)
+        with log.waiting(f"qemu: booting bundled appliance ({accel}"
+                         + ("; TCG is software-only, allow a minute" if accel.startswith("tcg") else "")
+                         + ")"):
+            try:
+                conn, _ = srv.accept()
+            except socket.timeout:
+                self.close()
+                err = (self._proc.stderr.read() or b"").decode("utf-8", "replace")[-600:]
+                raise EngineError(f"appliance did not connect back:\n{err}")
+            finally:
+                srv.close()
+            conn.settimeout(None)
+            self._con = _Console(conn)
+            self._con.handshake(boot_timeout)
 
     def sh(self, *a, **k):
         return self._con.sh(*a, **k)

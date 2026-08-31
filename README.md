@@ -107,6 +107,9 @@ vdi mcp out.vmdk@1 --writable --root /srv
 
 # or just point-and-click
 vdi gui
+
+# not sure if it's working? -v shows engine steps + timings, -vv traces every command
+vdi -v fs ls out.vmdk@1:/
 ```
 
 ## GUI
@@ -157,6 +160,7 @@ trailer, never an encoding. See `src/vdi/wire.py`.
 ### Known limits
 
 - Without a running `vdi serve`, each one-shot `fs` command boots the engine
-  (~1–50 s depending on KVM vs TCG). Start `vdi serve <image>` and one-shots reuse it.
+  (~1–50 s depending on KVM vs TCG) — use `-v` to watch it, or start
+  `vdi serve <image>` once and every one-shot after that reuses it (~0.5 s).
 - Windows-native `qemu` engine needs a `qemu-system-x86_64.exe` you supply.
 - exFAT/FAT have no POSIX permissions — `chmod`/`chown` return `ENOTSUP`.

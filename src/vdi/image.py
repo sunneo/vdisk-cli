@@ -36,11 +36,27 @@ _MKFS = {
 }
 
 
-def fmt_from_path(path: str) -> str:
+def fmt_from_path(path: str, *, probe: bool = True) -> str:
+    """Infer the qemu image format: by extension first, then (if the file exists)
+    by asking ``qemu-img info``."""
     ext = os.path.splitext(path)[1].lower()
-    if ext not in _EXT_TO_FMT:
-        raise VdiError(f"cannot infer image format from {path!r}; use --format")
-    return _EXT_TO_FMT[ext]
+    if ext in _EXT_TO_FMT:
+        return _EXT_TO_FMT[ext]
+    if probe and os.path.isfile(path):
+        f = detect_format(path)
+        if f:
+            return f
+    raise VdiError(
+        f"cannot tell the image format of {path!r} from its name; "
+        f"pass --format vmdk|vhdx|qcow2|raw (or give the file a matching extension)")
+
+
+def detect_format(path: str) -> str | None:
+    """Real on-disk format via qemu-img (host or through an engine); None if unknown."""
+    try:
+        return QemuImg().info(path).get("format")
+    except Exception:
+        return None
 
 
 @dataclass

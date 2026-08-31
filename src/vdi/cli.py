@@ -126,7 +126,7 @@ def cmd_image_create(args) -> int:
         print("[vdi] done")
         return 0
 
-    fmt = fmt_from_path(str(out))
+    fmt = args.format or fmt_from_path(str(out))
     if not hasattr(eng, "build_from_folder"):
         raise VdiError(f"engine {eng.name!r} cannot build disk images; try --engine wsl")
     print(f"[vdi] building {fmt} {out} ({args.size}) fs={args.fs} label={args.label or '-'} "
@@ -146,8 +146,9 @@ def cmd_image_convert(args) -> int:
         raise VdiError(f"{out} exists; pass --force")
     qi = QemuImg(engine=get_engine(args.engine))
     print(f"[vdi] converting {args.input} -> {out}")
-    qi.convert(args.input, str(out), compress=args.compress,
-               subformat=args.subformat, preallocation=args.preallocation)
+    qi.convert(args.input, str(out), src_fmt=args.src_format, dst_fmt=args.format,
+               compress=args.compress, subformat=args.subformat,
+               preallocation=args.preallocation)
     print("[vdi] qemu-img check ...")
     qi.check(str(out))
     print("[vdi] done")
@@ -404,7 +405,9 @@ def _parse_duration(s: str | None) -> float | None:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="vdi", description=__doc__)
     p.add_argument("--version", action="version", version=f"vdi {__version__}")
-    sub = p.add_subparsers(dest="cmd", required=False)
+    p.add_argument("-v", "--verbose", action="count", default=0,
+                   help="-v: show engine steps + timings; -vv: also trace every command")
+    sub = p.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("doctor", help="check engines and environment").set_defaults(func=cmd_doctor)
 
@@ -418,9 +421,11 @@ def build_parser() -> argparse.ArgumentParser:
     # image ---------------------------------------------------------
     img = sub.add_parser("image", help="image-level operations").add_subparsers(dest="sub", required=True)
 
+    _IMGFMT = ["vmdk", "vhdx", "vhd", "qcow2", "raw"]
     c = img.add_parser("create", help="build an image from a folder")
     c.add_argument("folder"); c.add_argument("output")
     c.add_argument("--fs", default="ext4", choices=list(("fat16 fat32 exfat ext2 ext3 ext4").split()))
+    c.add_argument("--format", choices=_IMGFMT, help="override format when the name has no extension")
     c.add_argument("--size", default="1G")
     c.add_argument("--label", default="")
     c.add_argument("--part-table", default="gpt", choices=["gpt", "mbr"])
@@ -430,6 +435,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     c = img.add_parser("convert", help="convert between disk image formats")
     c.add_argument("input"); c.add_argument("output")
+    c.add_argument("--format", choices=_IMGFMT, help="output format (else inferred from the name)")
+    c.add_argument("--src-format", choices=_IMGFMT, help="input format (else auto-detected)")
     c.add_argument("--compress", action="store_true")
     c.add_argument("--subformat")
     c.add_argument("--preallocation", choices=["off", "metadata", "full"])
@@ -543,13 +550,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+    if getattr(args, "verbose", 0):
+        from vdi import log
+        log.set_level(args.verbose)
     if not getattr(args, "func", None):
-        # bare `vdi` -> GUI if a display is available, else help
-        try:
-            return __import__("vdi.gui", fromlist=["main"]).main()
-        except Exception:
-            build_parser().parse_args(["-h"])
-            return 0
+        build_parser().parse_args(["-h"])
+        return 0
     try:
         return args.func(args)
     except VdiError as e:

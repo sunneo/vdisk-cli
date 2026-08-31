@@ -32,6 +32,7 @@ class Engine:
         partition: str | None = None,
         *,
         readonly: bool = False,
+        image_format: str | None = None,
     ) -> "OpenImage":
         """Attach *image*, mount *partition*, return an :class:`OpenImage`.
 

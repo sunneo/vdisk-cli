@@ -197,10 +197,12 @@ class VdiGui(tk.Tk):
             return
         eng_name, part, ro = d.engine, d.partition or None, d.readonly
 
+        fmt = d.fmt if d.fmt != "auto" else None
+
         def work():
             from vdi.engine import get_engine
             eng = get_engine(eng_name)
-            img = eng.open_image(path, part, readonly=ro)
+            img = eng.open_image(path, part, readonly=ro, image_format=fmt)
             return Conn(img, f"{os.path.basename(path)} [{img.fs_type()}]", ro, img.close)
 
         self.worker.submit(f"opening {os.path.basename(path)} …", work, self._connected)
@@ -448,13 +450,18 @@ class _AskOpts(tk.Toplevel):
         self._eng = tk.StringVar(value="auto")
         ttk.Combobox(self, textvariable=self._eng, values=["auto", "wsl", "qemu", "local"],
                      width=12, state="readonly").grid(row=1, column=1, sticky=tk.W, pady=3)
-        ttk.Label(self, text="Partition").grid(row=2, column=0, sticky=tk.E, padx=6)
+        ttk.Label(self, text="Format").grid(row=2, column=0, sticky=tk.E, padx=6)
+        self._fmt = tk.StringVar(value="auto")
+        ttk.Combobox(self, textvariable=self._fmt, width=12, state="readonly",
+                     values=["auto", "vmdk", "vhdx", "vhd", "qcow2", "raw"]).grid(
+            row=2, column=1, sticky=tk.W, pady=3)
+        ttk.Label(self, text="Partition").grid(row=3, column=0, sticky=tk.E, padx=6)
         self._part = tk.StringVar()
-        ttk.Entry(self, textvariable=self._part, width=14).grid(row=2, column=1, sticky=tk.W)
+        ttk.Entry(self, textvariable=self._part, width=14).grid(row=3, column=1, sticky=tk.W)
         self._ro = tk.BooleanVar()
-        ttk.Checkbutton(self, text="Read-only", variable=self._ro).grid(row=3, column=1, sticky=tk.W)
+        ttk.Checkbutton(self, text="Read-only", variable=self._ro).grid(row=4, column=1, sticky=tk.W)
         b = ttk.Frame(self)
-        b.grid(row=4, column=0, columnspan=2, pady=8)
+        b.grid(row=5, column=0, columnspan=2, pady=8)
         ttk.Button(b, text="Open", command=self._go).pack(side=tk.LEFT, padx=4)
         ttk.Button(b, text="Cancel", command=self.destroy).pack(side=tk.LEFT)
 
@@ -462,6 +469,7 @@ class _AskOpts(tk.Toplevel):
         self.engine = self._eng.get()
         self.partition = self._part.get().strip()
         self.readonly = self._ro.get()
+        self.fmt = self._fmt.get()
         self.ok = True
         self.destroy()
 
@@ -526,15 +534,18 @@ class _CreateDialog(tk.Toplevel):
         fs, size, label = self.fs.get(), self.size.get(), self.label.get()
         if not folder or not out:
             return
+        ext = os.path.splitext(out)[1].lower()
+        if ext not in (".iso", ".vmdk", ".vhdx", ".vhd", ".qcow2", ".raw", ".img"):
+            out += ".vmdk"          # sensible default when the name has no extension
         self.destroy()
 
         def work():
             from vdi.engine import get_engine
+            from vdi.image import fmt_from_path
             eng = get_engine("auto")
             if out.lower().endswith(".iso"):
                 eng.build_iso(folder, out, volid=label)
             else:
-                from vdi.image import fmt_from_path
                 eng.build_from_folder(folder, out, fmt=fmt_from_path(out), fs=fs,
                                       size=size, label=label)
 

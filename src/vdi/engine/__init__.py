@@ -29,10 +29,14 @@ def available_engines() -> list[EngineInfo]:
 
 
 def get_engine(name: str = "auto") -> Engine:
+    from vdi import log
     if name == "auto":
         for cand in _BACKENDS:
             eng = _load(cand)
-            if eng.probe().available:
+            info = eng.probe()
+            log.trace(f"engine {cand}: {'available' if info.available else 'no'} - {info.detail}")
+            if info.available:
+                log.step(f"engine: {cand}")
                 return eng
         raise EngineError(
             "no usable engine found. Run 'vdi doctor'. "
@@ -42,6 +46,8 @@ def get_engine(name: str = "auto") -> Engine:
 
 
 def _load(name: str) -> Engine:
+    from vdi import log
+    log.trace(f"engine: loading {name}")
     if name == "wsl":
         from vdi.engine.wsl import WslEngine
         return WslEngine()

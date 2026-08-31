@@ -32,7 +32,8 @@ class LocalDirEngine(Engine):
     def probe(self) -> EngineInfo:
         return EngineInfo(self.name, True, "maps a host directory as a filesystem (testing/debug)")
 
-    def open_image(self, image, partition=None, *, readonly=False) -> "LocalDirImage":
+    def open_image(self, image, partition=None, *, readonly=False,
+                   image_format=None) -> "LocalDirImage":
         root = Path(image).resolve()
         if not root.exists():
             root.mkdir(parents=True)

@@ -17,15 +17,13 @@ import queue
 import secrets
 import shlex
 import subprocess
-import sys
 import threading
 
-_DEBUG = os.environ.get("VDI_DEBUG") == "1"
+from vdi import log
 
 
 def _dbg(*a):
-    if _DEBUG:
-        print("[vdi/wsl]", *a, file=sys.stderr, flush=True)
+    log.trace("wsl " + " ".join(str(x) for x in a))
 
 from vdi.engine.base import Engine, EngineInfo, OpenImage
 from vdi.errors import EngineError, NotFound, ReadOnly, Unsupported
@@ -77,8 +75,9 @@ class GuestfishSession:
     # -- lifecycle -----------------------------------------------
     def start(self, *, prewarm: bool = True) -> None:
         if prewarm:
-            _wsl(["sh", "-c", "guestfish -a /dev/null run : quit"],
-                 distro=self.distro, check=False, timeout=600)
+            with log.waiting("wsl: preparing libguestfs appliance (first run can take 30-60s)"):
+                _wsl(["sh", "-c", "guestfish -a /dev/null run : quit"],
+                     distro=self.distro, check=False, timeout=600)
         cmd = ["wsl.exe"] + (["-d", self.distro] if self.distro else []) + \
               ["--", "bash", "--noprofile", "--norc"]
         self._p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -86,6 +85,7 @@ class GuestfishSession:
         self._feed('exec 2>&1\n'
                    'eval "$(guestfish --listen)"\n'
                    'printf "VDIREADY:%s\\n" "$GUESTFISH_PID"\n')
+        log.step("wsl: starting guestfish listener")
         line = self._read_until(b"VDIREADY:", 200)
         self.pid = line.rsplit(b"VDIREADY:", 1)[1].strip().decode()
         if not self.pid:
@@ -245,9 +245,19 @@ class WslEngine(Engine):
 
     # -- open --------------------------------------------------
     def open_image(self, image: str, partition: str | None = None, *,
-                   readonly: bool = False) -> "WslOpenImage":
+                   readonly: bool = False, image_format: str | None = None) -> "WslOpenImage":
         return WslOpenImage(self, self.wsl_path(image), partition,
-                            readonly=readonly, fmt=_fmt_of(image))
+                            readonly=readonly, fmt=image_format or self._detect_fmt(image))
+
+    def _detect_fmt(self, image: str) -> str | None:
+        f = _fmt_of(image)
+        if f:
+            return f
+        try:
+            from vdi.image import QemuImg
+            return QemuImg(engine=self).info(self.wsl_path(image)).get("format")
+        except Exception:
+            return None      # let guestfish auto-detect
 
     # -- build (需求 1) -------------------------------------
     def build_from_folder(self, folder: str, out: str, *, fmt: str, fs: str,
@@ -273,9 +283,7 @@ class WslEngine(Engine):
                 if label:
                     _set_label_via_tool(s, dev, fstype, label)
             s.gf("mount", dev, "/")
-            rel = os.path.relpath(out, os.path.abspath(folder))
-            tar = s.stage_tar(gfolder, exclude=("./" + rel.replace(os.sep, "/"))
-                              if not rel.startswith("..") else None)
+            tar = s.stage_tar(gfolder, exclude=_inside(out, folder))
             try:
                 s.gf("tar-in", tar, "/", timeout=600)
             finally:
@@ -307,7 +315,8 @@ class WslOpenImage(OpenImage):
         args = ["add-drive", guest_img] + ([f"format:{fmt}"] if fmt else []) + \
                (["readonly:true"] if readonly else [])
         self._s.gf(*args)
-        self._s.gf("run", timeout=400)
+        with log.waiting("wsl: booting appliance VM"):
+            self._s.gf("run", timeout=400)
         self._mount(partition)
 
     # test/debug hook used by `vdi image parts`
@@ -317,9 +326,15 @@ class WslOpenImage(OpenImage):
 
     def _mount(self, partition):
         dev = self._resolve_partition(partition)
-        self._s.gf("mount-ro" if self.readonly else "mount", dev, "/")
+        log.step(f"wsl: mounting {dev}")
+        _, rc = self._s.gf("mount-ro" if self.readonly else "mount", dev, "/", check=False)
+        if rc != 0:
+            raise EngineError(
+                f"could not mount {dev}. If the image is blank, format it first:\n"
+                f"    vdi image create <folder> {os.path.basename(self.guest_img)} --fs ext4 --size 1G")
         self.fs = self._s.text("vfs-type", dev).strip() or "unknown"
         self._device = dev
+        log.step(f"wsl: mounted {dev}  fs={self.fs}")
 
     def _resolve_partition(self, partition):
         pairs = []
@@ -327,11 +342,21 @@ class WslOpenImage(OpenImage):
             if ":" in line:
                 d, t = (x.strip() for x in line.split(":", 1))
                 pairs.append((d, t))
+        log.trace(f"wsl: filesystems = {pairs}")
         if partition is None:
             for d, t in pairs:
                 if t not in _SWAP_OR_UNKNOWN:
                     return d
-            raise EngineError(f"no mountable filesystem in image: {pairs}")
+            # nothing recognised -- maybe a whole-disk fs list-filesystems missed
+            for d, t in pairs:
+                _, rc = self._s.gf("file", d, check=False)
+                blk, brc = self._s.try_text("vfs-type", d)
+                if brc == 0 and blk.strip() and blk.strip() != "unknown":
+                    return d
+            raise EngineError(
+                "the image has no partition table and no recognised filesystem "
+                f"(devices: {pairs}). Is it a blank image? Format one with:\n"
+                f"    vdi image create <folder> {os.path.basename(self.guest_img)} --fs ext4 --size 1G")
         if partition.startswith("/dev/"):
             return partition
         if partition.isdigit():
@@ -534,6 +559,16 @@ def _set_label_via_tool(s: "GuestfishSession", dev: str, fstype: str, label: str
     if rc != 0:
         # non-fatal: label is cosmetic
         pass
+
+
+def _inside(out: str, folder: str) -> str | None:
+    """If ``out`` is a file inside ``folder``, return its ``./rel`` path for tar
+    --exclude; else None. Cross-drive / unrelated paths are None."""
+    try:
+        rel = os.path.relpath(os.path.abspath(out), os.path.abspath(folder))
+    except ValueError:
+        return None
+    return None if rel.startswith("..") else "./" + rel.replace(os.sep, "/")
 
 
 def _fmt_of(image: str) -> str | None:
