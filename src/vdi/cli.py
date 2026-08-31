@@ -404,7 +404,7 @@ def _parse_duration(s: str | None) -> float | None:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="vdi", description=__doc__)
     p.add_argument("--version", action="version", version=f"vdi {__version__}")
-    sub = p.add_subparsers(dest="cmd", required=True)
+    sub = p.add_subparsers(dest="cmd", required=False)
 
     sub.add_parser("doctor", help="check engines and environment").set_defaults(func=cmd_doctor)
 
@@ -528,6 +528,9 @@ def build_parser() -> argparse.ArgumentParser:
     x = sp.add_parser("info"); x.add_argument("name"); x.set_defaults(func=cmd_session_info)
     x = sp.add_parser("stop"); x.add_argument("name"); x.set_defaults(func=cmd_session_stop)
 
+    sub.add_parser("gui", help="open the graphical file manager (tkinter)").set_defaults(
+        func=lambda a: __import__("vdi.gui", fromlist=["main"]).main())
+
     c = sub.add_parser("mcp", help="serve one image to an AI over MCP (stdio)")
     c.add_argument("target")
     c.add_argument("--engine", default="auto")
@@ -540,6 +543,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+    if not getattr(args, "func", None):
+        # bare `vdi` -> GUI if a display is available, else help
+        try:
+            return __import__("vdi.gui", fromlist=["main"]).main()
+        except Exception:
+            build_parser().parse_args(["-h"])
+            return 0
     try:
         return args.func(args)
     except VdiError as e:

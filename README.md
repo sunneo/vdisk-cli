@@ -104,7 +104,19 @@ vdi fs write disk1:/opt/x --content ...        # or the NAME:/path shorthand
 # 6. let an AI in — MCP over stdio
 vdi mcp out.vmdk@1                 # read-only
 vdi mcp out.vmdk@1 --writable --root /srv
+
+# or just point-and-click
+vdi gui
 ```
+
+## GUI
+
+`vdi gui` opens a tkinter file manager: open any image (pick engine / partition /
+read-only) or attach to a running `vdi serve` session, then browse, view/edit
+text files, import/export files and folders, make/rename/delete directories, and
+run *Create image from folder* / *Convert* / *Serve* from the menus. All work
+happens on a background thread so an engine boot never freezes the window.
+(Linux needs the distro's `python3-tk`.)
 
 Claude Desktop `claude_desktop_config.json`:
 
@@ -134,6 +146,7 @@ trailer, never an encoding. See `src/vdi/wire.py`.
 | MCP frontend (stdio + TCP) | ✅ tested |
 | FTP + WebDAV frontends (stdlib) | ✅ tested (`tests/test_frontends.py`) |
 | FUSE frontend | ✅ Linux/macOS via fusepy |
+| GUI (`vdi gui`, tkinter) | ✅ tested (`tests/test_gui.py`) |
 | codec negotiation + TOON | ✅ tested |
 | bundled-QEMU appliance (M2) | ✅ boots + builds + CRUD (`tests/e2e_qemu.py`) |
 | packaging (PyInstaller + CI + release workflow) | ✅ `packaging/`, `.github/workflows/` |
