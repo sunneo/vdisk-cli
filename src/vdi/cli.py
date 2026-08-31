@@ -291,7 +291,8 @@ def cmd_serve(args) -> int:
                readonly=args.readonly, engine=args.engine,
                rpc_addr=addr or "127.0.0.1", rpc_port=int(port or 0),
                idle_timeout=_parse_duration(args.idle_timeout),
-               mcp=args.mcp, mcp_writable=args.mcp_writable, mcp_root=args.mcp_root)
+               mcp=args.mcp, mcp_writable=args.mcp_writable, mcp_root=args.mcp_root,
+               ftp=args.ftp, webdav=args.webdav, mount=args.mount)
     return d.run()
 
 
@@ -477,7 +478,10 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--rpc", default="127.0.0.1:0")
     c.add_argument("--mcp", help="also expose MCP on this bind (host:port)")
     c.add_argument("--mcp-writable", action="store_true", help="let MCP clients modify files")
-    c.add_argument("--mcp-root", default="/", help="restrict MCP clients to this subtree")
+    c.add_argument("--mcp-root", default="/", help="restrict frontends to this subtree")
+    c.add_argument("--ftp", nargs="?", const="2121", help="expose FTP (host:port, default :2121)")
+    c.add_argument("--webdav", nargs="?", const="8080", help="expose WebDAV (host:port, default :8080)")
+    c.add_argument("--mount", help="FUSE mount point (Linux/macOS)")
     c.add_argument("--idle-timeout")
     c.set_defaults(func=cmd_serve)
 
