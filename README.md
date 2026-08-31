@@ -120,8 +120,15 @@ vdi -v fs ls out.vmdk@1:/
 `vdi gui` opens a tkinter file manager: open any image (pick engine / partition /
 read-only) or attach to a running `vdi serve` session, then browse, view/edit
 text files, import/export files and folders, make/rename/delete directories, and
-run *Create image from folder* / *Convert* / *Serve* from the menus. All work
-happens on a background thread so an engine boot never freezes the window.
+run *Create image from folder* / *Convert* / *Serve* from the menus.
+
+All work happens on a background thread and a **progress bar + activity log**
+(bottom of the window, toggle in *View*) stream the engine's live steps —
+"creating blank image", "booting appliance VM", "mkfs fat32", "copying files",
+"mounting /dev/sda1 fs=ext4" — so a slow engine boot never looks frozen.
+*Server ▸ Serve this image* spawns the daemon, streams its log, and auto-attaches
+the moment the session is ready.
+
 (Linux needs the distro's `python3-tk`.)
 
 Claude Desktop `claude_desktop_config.json`:

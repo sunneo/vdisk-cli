@@ -26,6 +26,7 @@ def _env_level() -> int:
 
 
 _level = _env_level()
+_sinks: list = []      # extra consumers, e.g. the GUI status bar
 
 
 def set_level(n: int) -> None:
@@ -38,13 +39,36 @@ def level() -> int:
     return _level
 
 
+def add_sink(fn) -> None:
+    """Register ``fn(text, level)`` -- called for every step()/waiting() message
+    (and trace() at level 2) regardless of the stderr verbosity."""
+    _sinks.append(fn)
+
+
+def remove_sink(fn) -> None:
+    try:
+        _sinks.remove(fn)
+    except ValueError:
+        pass
+
+
+def _emit(msg: str, lvl: int) -> None:
+    for s in list(_sinks):
+        try:
+            s(msg, lvl)
+        except Exception:
+            pass
+
+
 def step(msg: str) -> None:
+    _emit(msg, 1)
     if _level >= 1:
         sys.stderr.write(f"[vdi +{time.time() - _t0:5.1f}s] {msg}\n")
         sys.stderr.flush()
 
 
 def trace(msg: str) -> None:
+    _emit(msg, 2)
     if _level >= 2:
         sys.stderr.write(f"[vdi]  {msg}\n")
         sys.stderr.flush()
@@ -62,9 +86,10 @@ class waiting:
         return self
 
     def __exit__(self, exc_type, *_):
+        dt = time.time() - self._t
+        tail = "done" if exc_type is None else "FAILED"
+        _emit(f"{self.msg}: {tail} ({dt:.1f}s)", 1)
         if _level >= 1:
-            dt = time.time() - self._t
-            tail = "done" if exc_type is None else "FAILED"
             sys.stderr.write(f"[vdi +{time.time() - _t0:5.1f}s]   {self.msg}: {tail} ({dt:.1f}s)\n")
             sys.stderr.flush()
         return False

@@ -268,13 +268,16 @@ class WslEngine(Engine):
         fstype = self._FS[fs]
         table = _resolve_part_table(part_table, fs)     # auto -> mbr for DOS fs
         gfolder, gout = self.wsl_path(folder), self.wsl_path(out)
+        log.step(f"wsl: creating blank {fmt} image ({size})")
         _wsl(["qemu-img", "create", "-f", fmt, gout, size], distro=self.distro, timeout=120)
 
         s = GuestfishSession(self.distro)
         s.start()
         try:
             s.gf("add-drive", gout, f"format:{fmt}")
-            s.gf("run", timeout=400)
+            with log.waiting("wsl: booting appliance VM"):
+                s.gf("run", timeout=400)
+            log.step(f"wsl: partitioning ({table.upper()})")
             s.gf("part-init", "/dev/sda", "mbr" if table == "mbr" else "gpt")
             s.gf("part-add", "/dev/sda", "primary", "2048", "-2048")
             dev = "/dev/sda1"
@@ -287,6 +290,7 @@ class WslEngine(Engine):
             if table == "mbr" and (boot or fs.startswith("fat")):
                 s.gf("part-set-bootable", "/dev/sda", "1", "true", check=False)
 
+            log.step(f"wsl: mkfs {fs}")
             if fstype == "vfat":
                 # set BPB hidden-sectors = partition LBA start so Win9x's fs
                 # driver accepts the geometry; -F picks FAT16/32 by --fs.
@@ -302,13 +306,16 @@ class WslEngine(Engine):
                 if label:
                     _set_label_via_tool(s, dev, fstype, label)
             s.gf("mount", dev, "/")
+            log.step("wsl: packing payload")
             tar = s.stage_tar(gfolder, exclude=_inside(out, folder))
             try:
-                s.gf("tar-in", tar, "/", timeout=600)
+                with log.waiting("wsl: copying files into the image"):
+                    s.gf("tar-in", tar, "/", timeout=600)
             finally:
                 s.rm_tmp(tar)
             s.gf("umount-all")
             s.gf("shutdown", check=False)
+            log.step("wsl: image ready")
         finally:
             s.stop()
 

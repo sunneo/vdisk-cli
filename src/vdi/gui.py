@@ -18,7 +18,7 @@ from dataclasses import dataclass
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 
-from vdi import __version__, registry
+from vdi import __version__, log, registry
 from vdi.target import parse_target, normalize_inner
 
 
@@ -58,6 +58,10 @@ class Worker:
                     self.root._busy(True, msg[1])
                 elif kind == "idle":
                     self.root._busy(False, "")
+                elif kind == "log":
+                    self.root._append_log(msg[1])
+                    if self.root.busy and msg[1]:
+                        self.root.status.config(text=msg[1])
                 elif kind == "done":
                     if msg[1]:
                         msg[1](msg[2])
@@ -92,13 +96,19 @@ class VdiGui(tk.Tk):
         self.conn: Conn | None = None
         self.cwd = "/"
         self.busy = False
+        self._servers = []
 
         self._build_menu()
         self._build_toolbar()
         self._build_tree()
+        self._build_activity()
         self._build_status()
 
         self.protocol("WM_DELETE_WINDOW", self._quit)
+
+        # surface engine progress (appliance boot, mkfs, copy, ...) live
+        log.set_level(max(1, log.level()))
+        log.add_sink(self._log_sink)
 
         self._toggle(True)
         self._refresh_sessions_menu()
@@ -117,6 +127,13 @@ class VdiGui(tk.Tk):
         fm.add_command(label="Close", command=self.close_conn)
         fm.add_command(label="Quit", command=self._quit)
         m.add_cascade(label="File", menu=fm)
+
+        vm = tk.Menu(m, tearoff=0)
+        vm.add_command(label="Refresh", command=self.refresh)
+        self._show_act = tk.BooleanVar(value=True)
+        vm.add_checkbutton(label="Activity log", variable=self._show_act,
+                           command=lambda: self._show_activity(self._show_act.get()))
+        m.add_cascade(label="View", menu=vm)
 
         sm = tk.Menu(m, tearoff=0)
         sm.add_command(label="Serve this image…", command=self.serve_dialog)
@@ -163,15 +180,62 @@ class VdiGui(tk.Tk):
         self.tree.bind("<Double-1>", self._on_double)
         self.tree.bind("<Return>", self._on_double)
 
+    def _build_activity(self):
+        self.act = ttk.Frame(self)
+        self.act.pack(side=tk.BOTTOM, fill=tk.X)
+        self.act_visible = False
+        self.act_txt = tk.Text(self.act, height=5, wrap=tk.NONE, state="disabled",
+                               font=("Consolas", 9), background="#1e1e1e", foreground="#d0d0d0")
+        self.act_sb = ttk.Scrollbar(self.act, orient="vertical", command=self.act_txt.yview)
+        self.act_txt.configure(yscrollcommand=self.act_sb.set)
+
+    def _show_activity(self, show: bool):
+        if getattr(self, "_show_act", None) is not None:
+            self._show_act.set(show)
+        if show and not self.act_visible:
+            self.act_txt.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            self.act_sb.pack(side=tk.RIGHT, fill=tk.Y)
+            self.act_visible = True
+        elif not show and self.act_visible:
+            self.act_txt.pack_forget(); self.act_sb.pack_forget()
+            self.act_visible = False
+
     def _build_status(self):
-        self.status = ttk.Label(self, text="no image open", anchor=tk.W, relief=tk.SUNKEN)
-        self.status.pack(side=tk.BOTTOM, fill=tk.X)
+        s = ttk.Frame(self)
+        s.pack(side=tk.BOTTOM, fill=tk.X)
+        self.progress = ttk.Progressbar(s, mode="indeterminate", length=140)
+        self.progress.pack(side=tk.RIGHT, padx=4, pady=2)
+        self.status = ttk.Label(s, text="no image open", anchor=tk.W, relief=tk.SUNKEN)
+        self.status.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+    def _log_sink(self, msg: str, lvl: int):
+        # called from any thread -> hand to the main thread via the pump
+        try:
+            self.worker._out.put(("log", msg, lvl))
+        except Exception:
+            pass
+
+    def _append_log(self, msg: str):
+        if getattr(self, "_show_act", None) is None or self._show_act.get():
+            self._show_activity(True)
+        self.act_txt.configure(state="normal")
+        self.act_txt.insert(tk.END, msg.rstrip() + "\n")
+        self.act_txt.see(tk.END)
+        # keep it bounded
+        if int(self.act_txt.index("end-1c").split(".")[0]) > 400:
+            self.act_txt.delete("1.0", "200.0")
+        self.act_txt.configure(state="disabled")
 
     def _busy(self, b: bool, label: str):
         self.busy = b
         self.config(cursor="watch" if b else "")
+        if b:
+            self.progress.start(12)
+        else:
+            self.progress.stop()
         if label:
             self.status.config(text=label)
+            self._append_log(label)
         elif not b:
             self.status.config(text=self.cwd if self.conn else "ready")
         self._toggle(not b)
@@ -430,8 +494,52 @@ class VdiGui(tk.Tk):
             return
         _ServeDialog(self, path)
 
+    def start_server(self, name, args):
+        """Spawn `vdi serve` in a child process, stream its progress into the
+        activity log, and auto-attach once the session registers."""
+        import subprocess
+        env = {**os.environ, "PYTHONPATH": _srcpath(), "VDI_VERBOSE": "1"}
+        p = subprocess.Popen(args, env=env, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.PIPE, bufsize=1, text=True)
+        self._servers.append(p)
+        self._busy(True, f"starting server '{name}' ...")
+
+        def reader():
+            for line in p.stderr:
+                self.worker._out.put(("log", "  " + line.rstrip(), 1))
+        threading.Thread(target=reader, daemon=True).start()
+
+        started = [None]
+
+        def check():
+            if started[0]:
+                return
+            try:
+                registry.resolve(name)
+                started[0] = True
+                self._busy(False, "")
+                self._append_log(f"server '{name}' is up — attaching")
+                self._refresh_sessions_menu()
+                self.attach_session(name)
+                return
+            except Exception:
+                pass
+            if p.poll() is not None:
+                started[0] = True
+                self._busy(False, "")
+                messagebox.showerror("vdi", f"server '{name}' exited before it was ready "
+                                     f"(code {p.returncode}) — see the activity log.")
+                return
+            self.after(500, check)
+
+        self.after(500, check)
+
     def _quit(self):
+        log.remove_sink(self._log_sink)
         self.close_conn(silent=True)
+        for p in getattr(self, "_servers", []):
+            if p.poll() is None:
+                p.terminate()
         self.destroy()
 
 
@@ -576,9 +684,9 @@ class _ServeDialog(tk.Toplevel):
         ttk.Button(self, text="Start (new process)", command=self._go).grid(row=6, column=1, pady=8)
 
     def _go(self):
-        import subprocess
         import sys
-        args = [sys.executable, "-m", "vdi", "serve", self.path, "--name", self.name.get()]
+        name = self.name.get()
+        args = [sys.executable, "-m", "vdi", "-v", "serve", self.path, "--name", name]
         if self.ro.get():
             args.append("--readonly")
         if self.ftp.get():
@@ -587,9 +695,7 @@ class _ServeDialog(tk.Toplevel):
             args += ["--webdav", "127.0.0.1:8080"]
         if self.mcp.get():
             args += ["--mcp", "127.0.0.1:7333", "--mcp-writable"]
-        subprocess.Popen(args, env={**os.environ, "PYTHONPATH": _srcpath()})
-        messagebox.showinfo("vdi", "Server starting in a new process.\n"
-                            "Use File ▸ Attach to session once it is ready.")
+        self.master.start_server(name, args)
         self.destroy()
 
 
